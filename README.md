@@ -98,3 +98,7 @@ python3 -m unittest discover -s tests -v
 ## 许可与来源
 
 本仓库自有代码使用 MIT 许可，见 [LICENSE](LICENSE)。来源与第三方边界见 [SOURCE.md](SOURCE.md)：仓库由本机自定义 0.1.9 快照整理而来；应用 bundled 的 `codex-app-tools` 是外部依赖，未复制进仓库，也不在本仓库许可范围内。
+
+## AI 协作与术语
+
+修改本项目前阅读 [AGENTS.md](AGENTS.md)。跨项目沟通使用 [Agent Link 术语约定](https://github.com/zyth72/agent-link/blob/main/docs/TERMINOLOGY.md)，区分后台运行器、通知桥、汇报和完成通知。
