@@ -1,0 +1,7 @@
+{
+  "name": "background-tasks",
+  "version": "0.1.9",
+  "description": "后台运行 CLI，完成、失败、超时或取消后将结果送回发起聊天。",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

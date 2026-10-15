@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "background_tasks": {
+      "command": "python3",
+      "args": [
+        "scripts/server.py"
+      ],
+      "env_vars": [
+        "CODEX_HOME",
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+        "CODEX_APP_TOOLS_PIPE_PATH",
+        "CODEX_APP_TOOLS_CALLER_HOST_ID",
+        "WSL_INTEROP",
+        "WSL_DISTRO_NAME",
+        "WSLENV"
+      ],
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 30
+    }
+  }
+}
