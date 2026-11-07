@@ -1,13 +1,16 @@
 """Persistent, detached CLI jobs. Uses Python's standard library only."""
 import asyncio
+from contextlib import ExitStack
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -17,6 +20,10 @@ from notifier import notification
 TERMINAL = {'completed', 'failed', 'cancelled', 'timed_out'}
 OUTPUT_LIMIT = 2 * 1024 * 1024
 TAIL_LIMIT = 32000
+MIN_PROGRESS_INTERVAL = 60
+MAX_PROGRESS_BYTES = 4096
+PROGRESS_SOCKET_ENV = 'CODEX_BACKGROUND_PROGRESS_SOCKET'
+PROGRESS_CLI_ENV = 'CODEX_BACKGROUND_TASKS_CLI'
 
 
 def now():
@@ -76,7 +83,19 @@ def cancel(task_id, thread_id):
     return {'task_id': task_id, 'cancel_requested': False, 'status': job['status']}
 
 
-def start(command, cwd, thread_id, timeout_seconds=3600, notify=True):
+def emit_progress(message):
+    address = os.environ.get(PROGRESS_SOCKET_ENV)
+    if not address:
+        raise ValueError('Progress requires a background task with notifications enabled')
+    payload = message.encode('utf-8')
+    if not message.strip() or len(payload) > MAX_PROGRESS_BYTES:
+        raise ValueError(f'Progress message must be nonempty and at most {MAX_PROGRESS_BYTES} UTF-8 bytes')
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
+        channel.setblocking(False)
+        channel.sendto(payload, address)
+
+
+def start(command, cwd, thread_id, timeout_seconds=3600, notify=True, progress_interval_seconds=None):
     if not isinstance(command, str) or not command.strip():
         raise ValueError('command must be a nonempty string')
     if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
@@ -87,6 +106,11 @@ def start(command, cwd, thread_id, timeout_seconds=3600, notify=True):
         raise ValueError('timeout_seconds must be an integer from 1 to 604800')
     if not isinstance(notify, bool):
         raise ValueError('notify must be a boolean')
+    if progress_interval_seconds is not None:
+        if type(progress_interval_seconds) is not int or progress_interval_seconds < MIN_PROGRESS_INTERVAL:
+            raise ValueError(f'progress_interval_seconds must be an integer of at least {MIN_PROGRESS_INTERVAL}')
+        if not notify:
+            raise ValueError('progress_interval_seconds requires notify=true')
     if notify and not os.environ.get('CODEX_APP_TOOLS_PIPE_PATH'):
         raise ValueError('Desktop app notification pipe unavailable; use notify=false for execution only')
     task_id = 'cli-' + uuid.uuid4().hex
@@ -96,6 +120,8 @@ def start(command, cwd, thread_id, timeout_seconds=3600, notify=True):
            'timeout_seconds': timeout_seconds, 'notify': notify, 'status': 'starting', 'created_at': now(),
            'exit_code': None, 'duration_seconds': None, 'output_tail': '', 'output_truncated': False,
            'output_path': str(folder / 'output.log'), 'notification_status': 'pending' if notify else 'disabled'}
+    if progress_interval_seconds is not None:
+        job['progress_interval_seconds'] = progress_interval_seconds
     save(folder, job)
     try:
         with (folder / 'worker.log').open('ab') as log:
@@ -133,6 +159,9 @@ async def execute(folder, job):
     started = time.monotonic()
     process = None
     reader = None
+    progress = None
+    progress_resources = ExitStack()
+    progress_closed = False
     tail = bytearray()
     total = 0
     written = 0
@@ -144,9 +173,23 @@ async def execute(folder, job):
         shell = shutil.which('bash')
         if not shell:
             raise RuntimeError('Bash unavailable')
+        child_env = dict(os.environ)
+        child_env.pop(PROGRESS_SOCKET_ENV, None)
+        child_env.pop(PROGRESS_CLI_ENV, None)
+        if job['notify']:
+            directory = progress_resources.enter_context(tempfile.TemporaryDirectory(prefix='codex-progress-', dir='/tmp'))
+            address = Path(directory) / 'events.sock'
+            channel = progress_resources.enter_context(socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM))
+            channel.setblocking(False)
+            channel.bind(str(address))
+            wake = progress_resources.enter_context(socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM))
+            wake.setblocking(False)
+            wake.connect(str(address))
+            child_env[PROGRESS_SOCKET_ENV] = str(address)
+            child_env[PROGRESS_CLI_ENV] = str(Path(__file__).with_name('cli.py').resolve())
         process = await asyncio.create_subprocess_exec(shell, '-c', job['command'], cwd=job['cwd'],
             stdin=subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True)
+            start_new_session=True, env=child_env)
         job.update(status='running', command_pid=process.pid, started_at=now())
         save(folder, job)
 
@@ -164,9 +207,69 @@ async def execute(folder, job):
                     if len(tail) > TAIL_LIMIT:
                         del tail[:-TAIL_LIMIT]
 
+        async def report_progress():
+            loop = asyncio.get_running_loop()
+            interval = job.get('progress_interval_seconds')
+            next_progress = None
+            if interval is not None and interval < job['timeout_seconds']:
+                next_progress = time.monotonic() + interval
+            try:
+                while True:
+                    if progress_closed:
+                        try:
+                            payload = channel.recv(MAX_PROGRESS_BYTES + 1)
+                        except BlockingIOError:
+                            return
+                    else:
+                        timeout = None if next_progress is None else max(0, next_progress - time.monotonic())
+                        try:
+                            payload = await asyncio.wait_for(loop.sock_recv(channel, MAX_PROGRESS_BYTES + 1), timeout)
+                        except TimeoutError:
+                            payload = None
+                            next_progress = time.monotonic() + interval
+                    elapsed = job.get('duration_seconds')
+                    if elapsed is None:
+                        elapsed = round(time.monotonic() - started, 3)
+                    snapshot = dict(job, status='running', duration_seconds=elapsed)
+                    if payload is None:
+                        if progress_closed or job['status'] != 'running' or process.returncode is not None:
+                            next_progress = None
+                            continue
+                        output = tail.decode('utf-8', errors='replace')
+                        snapshot.update(output_tail=output[-1000:], output_bytes=total,
+                                        output_truncated=total > len(tail) or len(output) > 1000)
+                    elif 0 < len(payload) <= MAX_PROGRESS_BYTES:
+                        snapshot['progress_message'] = payload.decode('utf-8', errors='replace')
+                    else:
+                        continue
+                    await asyncio.to_thread(notification, snapshot, progress=True)
+                    job['last_progress_queued_at'] = now()
+                    if job['status'] == 'running':
+                        save(folder, job)
+            except Exception as error:
+                job['progress_notification_error'] = str(error)
+                address.unlink(missing_ok=True)
+                if job['status'] == 'running':
+                    save(folder, job)
+
+        def close_progress():
+            nonlocal progress_closed
+            if progress is not None and not progress_closed:
+                progress_closed = True
+                address.unlink(missing_ok=True)
+                if not progress.done():
+                    try:
+                        wake.send(b'')
+                    except BlockingIOError:
+                        # A full socket already has messages to wake the reader.
+                        pass
+
         reader = asyncio.create_task(drain())
         waiter = asyncio.create_task(process.wait())
+        if job['notify']:
+            progress = asyncio.create_task(report_progress())
         deadline = started + job['timeout_seconds']
+
         while True:
             if waiter.done():
                 job['status'] = 'completed' if waiter.result() == 0 else 'failed'
@@ -180,6 +283,7 @@ async def execute(folder, job):
                 await stop_group(process)
                 break
             await asyncio.wait({waiter}, timeout=min(0.2, max(0.001, deadline - time.monotonic())))
+        close_progress()
         job['exit_code'] = await waiter
         try:
             await asyncio.wait_for(asyncio.shield(reader), 2)
@@ -200,7 +304,15 @@ async def execute(folder, job):
         job.update(duration_seconds=round(time.monotonic() - started, 3), finished_at=now(),
                    output_tail=output[-8000:], output_bytes=total,
                    output_truncated=total > OUTPUT_LIMIT or len(output) > 8000 or stream_incomplete)
-        save(folder, job)
+        try:
+            save(folder, job)
+            if progress is not None:
+                close_progress()
+                # Drain milestones accepted before exit, then send the terminal result.
+                await progress
+                save(folder, job)
+        finally:
+            progress_resources.close()
 
 
 def worker(folder):

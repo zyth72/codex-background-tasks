@@ -13,15 +13,25 @@ run.add_argument('--command', required=True)
 run.add_argument('--cwd', required=True)
 run.add_argument('--timeout', type=int, default=3600)
 run.add_argument('--no-notify', action='store_true')
+run.add_argument('--progress-interval', type=int, metavar='SECONDS',
+                 help=f'send progress every SECONDS while running (minimum {jobs.MIN_PROGRESS_INTERVAL})')
 for name in ['get', 'cancel']:
     sub.add_parser(name).add_argument('task_id')
 sub.add_parser('list')
 sub.add_parser('probe')
+sub.add_parser('progress', help='send a milestone from within a background task').add_argument('message')
 args = parser.parse_args()
+if args.action == 'progress':
+    try:
+        jobs.emit_progress(args.message)
+    except (OSError, ValueError) as error:
+        parser.error(f'Could not submit progress: {error}')
+    raise SystemExit(0)
 if args.action == 'probe':
     result = bridge({'probe': True})
 elif args.action == 'run':
-    result = jobs.start(args.command, args.cwd, args.thread_id, args.timeout, not args.no_notify)
+    result = jobs.start(args.command, args.cwd, args.thread_id, args.timeout, not args.no_notify,
+                        progress_interval_seconds=args.progress_interval)
 elif args.action == 'get':
     result = jobs.get(args.task_id, args.thread_id)
 elif args.action == 'cancel':

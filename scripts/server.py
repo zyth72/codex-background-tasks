@@ -18,10 +18,13 @@ TOOLS = [
     {'name': 'read_task_panel', 'description': 'Read task panel data with host-provided conversation metadata on this call.', 'inputSchema': schema({'scope': {'type': 'string', 'enum': ['chat', 'all', 'thread']}, 'thread_id': {'type': 'string'}, 'catalog': {'type': 'boolean'}}), 'annotations': {'readOnlyHint': True}, '_meta': {'ui': {'visibility': ['app', 'model']}}},
     {'name': 'open_task_panel', 'description': 'Open a read-only live task dashboard showing counts, commands and status. Returns a local URL; use open_in_codex to show it in the current chat browser panel.',
      'inputSchema': schema({})},
-    {'name': 'run_cli', 'description': 'Run an authorized CLI command in background. Send its result to this desktop chat when it exits. Executes in the local MCP process environment.',
+    {'name': 'run_cli', 'description': 'Run an authorized CLI command in background. Send its result, script milestones, and optional periodic progress to this desktop chat. Executes in the local MCP process environment.',
      'inputSchema': schema({'command': {'type': 'string'}, 'cwd': {'type': 'string'},
         'timeout_seconds': {'type': 'integer', 'minimum': 1, 'maximum': 604800, 'default': 3600},
-        'notify': {'type': 'boolean', 'default': True}}, ['command', 'cwd'])},
+        'notify': {'type': 'boolean', 'default': True},
+        'progress_interval_seconds': {'type': 'integer', 'minimum': jobs.MIN_PROGRESS_INTERVAL,
+                                      'description': 'Seconds between progress updates. Omit to send only the final result. Requires notify=true.'}},
+        ['command', 'cwd'])},
     {'name': 'get_cli_task', 'description': 'Read status, output and notification outcome of a task in this chat.',
      'inputSchema': schema({'task_id': {'type': 'string'}}, ['task_id']), 'annotations': {'readOnlyHint': True}},
     {'name': 'list_cli_tasks', 'description': 'List recent CLI tasks belonging to this chat.',
@@ -95,7 +98,7 @@ def dispatch(message):
         offered = params.get('protocolVersion', '2024-11-05')
         version = offered if offered in ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'] else '2024-11-05'
         return {'protocolVersion': version, 'capabilities': {'tools': {}, 'resources': {}},
-                'serverInfo': {'name': 'background-tasks', 'version': '0.1.9'}}
+                'serverInfo': {'name': 'background-tasks', 'version': '0.1.12'}}
     if method == 'ping':
         return {}
     if method == 'tools/list':

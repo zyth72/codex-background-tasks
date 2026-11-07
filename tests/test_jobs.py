@@ -55,7 +55,7 @@ class JobTests(unittest.TestCase):
             time.sleep(0.05)
         self.fail(f'task {task_id} did not reach {statuses}; last record: {last}')
 
-    def make_notify_folder(self, notify):
+    def make_notify_folder(self, notify, command=None, progress_interval_seconds=None):
         folder = jobs.root() / ('cli-' + uuid.uuid4().hex)
         folder.mkdir(parents=True, mode=0o700)
         job = {'task_id': folder.name, 'thread_id': 'thread-a', 'command': "printf 'notify\\n'",
@@ -63,6 +63,10 @@ class JobTests(unittest.TestCase):
                'created_at': jobs.now(), 'exit_code': None, 'duration_seconds': None,
                'output_tail': '', 'output_truncated': False, 'output_path': str(folder / 'output.log'),
                'notification_status': 'pending' if notify else 'disabled'}
+        if command is not None:
+            job['command'] = command
+        if progress_interval_seconds is not None:
+            job['progress_interval_seconds'] = progress_interval_seconds
         jobs.save(folder, job)
         return folder
 
@@ -141,6 +145,55 @@ class JobTests(unittest.TestCase):
     def test_notify_true_requires_desktop_pipe(self):
         with self.assertRaises(ValueError):
             jobs.start("printf 'x'", str(self.cwd), 'thread-a', timeout_seconds=60, notify=True)
+
+    def test_progress_interval_validation(self):
+        for value in [True, 0, 59, 60.5, '60']:
+            with self.subTest(interval=value), self.assertRaises(ValueError):
+                jobs.start(':', str(self.cwd), 'thread-a', progress_interval_seconds=value)
+        with self.assertRaisesRegex(ValueError, 'requires notify=true'):
+            jobs.start(':', str(self.cwd), 'thread-a', notify=False, progress_interval_seconds=60)
+
+    def test_script_milestone_precedes_completion(self):
+        folder = self.make_notify_folder(True,
+            command='python3 "$CODEX_BACKGROUND_TASKS_CLI" progress "stage complete"')
+        with mock.patch.object(jobs, 'notification', return_value={'delivered': True}) as notifying:
+            jobs.worker(folder)
+        self.assertEqual(notifying.call_count, 2)
+        progress, completed = notifying.call_args_list
+        self.assertTrue(progress.kwargs['progress'])
+        self.assertEqual(progress.args[0]['progress_message'], 'stage complete')
+        self.assertEqual(progress.args[0]['thread_id'], 'thread-a')
+        self.assertEqual(completed.kwargs, {})
+        result = jobs.get(folder.name, 'thread-a')
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['notification_status'], 'sent')
+        self.assertIn('last_progress_queued_at', result)
+
+    def test_periodic_progress_uses_output_tail(self):
+        # Internal records can use a short interval while the public entry point enforces 60 seconds.
+        folder = self.make_notify_folder(True, command="printf 'stage output'; sleep 0.6",
+                                         progress_interval_seconds=0.15)
+        with mock.patch.object(jobs, 'notification', return_value={'delivered': True}) as notifying:
+            jobs.worker(folder)
+        progress = [call for call in notifying.call_args_list if call.kwargs.get('progress')]
+        self.assertGreaterEqual(len(progress), 1)
+        self.assertTrue(all(call.args[0]['output_tail'] == 'stage output' for call in progress))
+        self.assertEqual(notifying.call_args_list[-1].kwargs, {})
+
+    def test_progress_failure_stops_updates_but_still_sends_completion(self):
+        folder = self.make_notify_folder(True, command='sleep 0.6', progress_interval_seconds=0.15)
+
+        def notify(job, *, progress=False):
+            if progress:
+                raise RuntimeError('mock progress unavailable')
+            return {'delivered': True}
+
+        with mock.patch.object(jobs, 'notification', side_effect=notify) as notifying:
+            jobs.worker(folder)
+        self.assertEqual(notifying.call_count, 2)
+        result = jobs.get(folder.name, 'thread-a')
+        self.assertEqual(result['progress_notification_error'], 'mock progress unavailable')
+        self.assertEqual(result['notification_status'], 'sent')
 
     def test_panel_snapshot_reads_only_job_state(self):
         job = jobs.start("printf 'panel'", str(self.cwd), 'thread-a', timeout_seconds=60, notify=False)

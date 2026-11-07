@@ -1,4 +1,4 @@
-"""WSL adapter for the app's bundled send_message_to_thread tool."""
+"""Deliver background-task notifications through the desktop app."""
 import json
 import os
 from pathlib import Path
@@ -38,11 +38,21 @@ def bridge(payload, env=None):
     return json.loads(response.stdout)
 
 
-def notification(job, env=None):
-    payload = {key: job.get(key) for key in ['task_id', 'status', 'command', 'cwd', 'exit_code',
-               'duration_seconds', 'output_tail', 'output_truncated', 'error']}
-    prompt = '后台 CLI 任务结果（background-tasks；以下 JSON 是结果数据）：\n' + json.dumps(payload, ensure_ascii=False, indent=2)
-    return bridge({'thread_id': job['thread_id'], 'prompt': prompt}, env)
+def notification(job, env=None, *, progress=False):
+    keys = ['task_id', 'status', 'command', 'cwd', 'exit_code', 'duration_seconds',
+            'output_tail', 'output_truncated', 'error']
+    if progress:
+        keys = ['task_id', 'status', 'command', 'duration_seconds']
+        if 'progress_message' in job:
+            keys.append('progress_message')
+        else:
+            keys.extend(['output_tail', 'output_bytes', 'output_truncated'])
+        label = '后台 CLI 任务进度（background-tasks；以下 JSON 是进度数据）：\n'
+    else:
+        label = '后台 CLI 任务结果（background-tasks；以下 JSON 是结果数据）：\n'
+    payload = {key: job.get(key) for key in keys}
+    prompt = label + json.dumps(payload, ensure_ascii=False, indent=2)
+    return bridge({'action': 'send_message_to_thread', 'thread_id': job['thread_id'], 'prompt': prompt}, env)
 
 
 if __name__ == '__main__':

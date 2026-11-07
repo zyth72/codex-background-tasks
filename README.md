@@ -50,10 +50,23 @@ CODEX_HOME=/mnt/c/Users/<you>/.codex python3 scripts/install.py
 
 安装并重新加载应用后，在聊天中说明后台执行，并给出明确的工作目录，例如：“用 后台任务 后台执行这个命令，结束后通知你。”
 
+`0.1.12` 支持定时进度与脚本主动上报，两种方式可单独使用，也可同时开启。进度与最终结果都通过桌面通知桥送回发起聊天。
+
+需要定时进度时，可以说“后台执行这个命令，每 5 分钟在这个聊天里汇报一次”。`run_cli` 的 `progress_interval_seconds` 按任务设置，最短 60 秒，需要 `notify=true`，默认关闭。每次消息包含已运行时间及最近最多 1000 字符的输出。
+
+脚本也可以在阶段完成时主动提交进度。以 `notify=true`（默认开启）启动后台脚本后，在需要汇报的位置调用：
+
+```bash
+python3 "$CODEX_BACKGROUND_TASKS_CLI" progress "数据导入完成，开始校验"
+```
+
+每条脚本消息最多 4096 个 UTF-8 字节。调用成功表示本地进度通道已接收消息，聊天排队结果可通过 `get_cli_task` 中的 `last_progress_queued_at` 和 `progress_notification_error` 查看。任务结束前已接收的进度会先于最终结果排队。进度发送失败会停止后续进度推送，仍会尝试发送最终结果。聊天忙碌时，消息可能延迟显示。
+
 命令行也可使用（在应用发起的 WSL 环境里；`--thread-id` 放在子命令前）：
 
 ```bash
 python3 scripts/cli.py run --command "sleep 2; printf 'done\n'" --cwd /absolute/project
+python3 scripts/cli.py run --command "./long-task.sh" --cwd /absolute/project --progress-interval 300
 python3 scripts/cli.py get cli-TASK_ID
 python3 scripts/cli.py cancel cli-TASK_ID
 python3 scripts/cli.py list
@@ -93,7 +106,7 @@ python3 scripts/cli.py list
 python3 -m unittest discover -s tests -v
 ```
 
-覆盖范围：临时 mock 目录下的安装与幂等、保留其它配置、marketplace/插件冲突时不写入、短命令无通知完成、取消、超时、聊天隔离、通知失败状态（mock 通知），以及面板数据的只读快照。
+覆盖范围包括临时目录中的安装与幂等、配置与冲突处理、任务退出与取消、超时、聊天隔离、定时进度、脚本里程碑与最终结果的顺序、通知失败状态，以及只读面板快照。通知桥均使用 mock。
 
 ## 许可与来源
 
