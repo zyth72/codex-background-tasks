@@ -1,8 +1,48 @@
-"""Deliver background-task notifications through the desktop app."""
+"""Deliver background-task notifications through the desktop app or Paseo."""
 import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
+import tempfile
+
+
+def paseo_target(thread_id, env):
+    """Only the agent hosting this Codex thread may receive notifications."""
+    origin = env.get('CODEX_THREAD_ID') or env.get('CODEX_SESSION_ID')
+    if origin and thread_id == origin:
+        return env.get('PASEO_AGENT_ID')
+    return None
+
+
+def notification_available(thread_id, env=None):
+    env = os.environ if env is None else env
+    return bool(env.get('CODEX_APP_TOOLS_PIPE_PATH') or
+                (paseo_target(thread_id, env) and shutil.which('paseo', path=env.get('PATH', ''))))
+
+
+def paseo_bridge(payload, env):
+    target = paseo_target(payload.get('thread_id'), env)
+    if not target:
+        raise RuntimeError('Paseo notification target does not match the originating Codex thread')
+    if payload.get('action') != 'send_message_to_thread':
+        raise RuntimeError('Paseo chat catalog is unavailable; panel lists chats with task records')
+    executable = shutil.which('paseo', path=env.get('PATH', ''))
+    if not executable:
+        raise RuntimeError('Paseo CLI is unavailable')
+    if payload.get('probe'):
+        return {'available': True, 'backend': 'paseo'}
+    # A private file keeps task output out of process arguments; never invoke a shell.
+    with tempfile.TemporaryDirectory(prefix='background-tasks-notify-') as directory:
+        prompt = Path(directory) / 'prompt.txt'
+        prompt.write_text(payload['prompt'], encoding='utf-8')
+        response = subprocess.run(
+            [executable, 'send', target, '--prompt-file', str(prompt),
+             '--behavior', 'steer', '--no-wait', '--json'],
+            text=True, capture_output=True, env=env, timeout=35)
+    if response.returncode:
+        raise RuntimeError((response.stderr or response.stdout or 'Paseo notification failed').strip()[-4000:])
+    return {'delivered': True, 'backend': 'paseo', 'result': json.loads(response.stdout)}
 
 
 def app_runtime(home):
@@ -23,7 +63,9 @@ def app_runtime(home):
 def bridge(payload, env=None):
     env = dict(os.environ if env is None else env)
     if not env.get('CODEX_APP_TOOLS_PIPE_PATH'):
-        raise RuntimeError('CODEX_APP_TOOLS_PIPE_PATH is absent; launch from the desktop chat')
+        if env.get('PASEO_AGENT_ID'):
+            return paseo_bridge(payload, env)
+        raise RuntimeError('No notification bridge; launch from a desktop or Paseo chat, or use notify=false')
     node, server = app_runtime(env.get('CODEX_HOME', str(Path.home() / '.codex')))
     script = subprocess.check_output(['wslpath', '-w', str(Path(__file__).with_name('app_bridge.mjs'))], text=True).strip()
     inherited = [part for part in env.get('WSLENV', '').split(':') if part]
@@ -56,4 +98,6 @@ def notification(job, env=None, *, progress=False):
 
 
 if __name__ == '__main__':
-    print(json.dumps(bridge({'probe': True}), ensure_ascii=False))
+    print(json.dumps(bridge({'probe': True, 'action': 'send_message_to_thread',
+                             'thread_id': os.environ.get('CODEX_THREAD_ID') or os.environ.get('CODEX_SESSION_ID')}),
+                     ensure_ascii=False))

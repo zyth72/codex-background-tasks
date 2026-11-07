@@ -11,6 +11,9 @@
         "CODEX_SESSION_ID",
         "CODEX_APP_TOOLS_PIPE_PATH",
         "CODEX_APP_TOOLS_CALLER_HOST_ID",
+        "PASEO_AGENT_ID",
+        "PASEO_HOME",
+        "PASEO_HOST",
         "WSL_INTEROP",
         "WSL_DISTRO_NAME",
         "WSLENV"

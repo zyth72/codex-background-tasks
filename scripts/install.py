@@ -1,4 +1,4 @@
-"""Install into the current Windows-backed CODEX_HOME, preserving other settings.
+"""Install into the current CODEX_HOME, preserving other settings.
 
 Run from the cloned repository in WSL (Python >= 3.11 for tomllib):
 
@@ -28,15 +28,14 @@ PLUGIN_KEY = f'{PLUGIN_NAME}@{MARKETPLACE_NAME}'
 def resolve_home(codex_home=None):
     """Return the target CODEX_HOME.
 
-    The environment path keeps the Windows/WSL safety constraint: the desktop
-    app's CODEX_HOME is a Windows directory mounted under /mnt. Tests pass an
+    Supports native Linux/macOS and Windows-backed paths in WSL. Tests pass an
     explicit temporary path so they never touch a real installation.
     """
     if codex_home is not None:
         return Path(codex_home)
-    home = Path(os.environ['CODEX_HOME'])
-    if not str(home).startswith('/mnt/'):
-        raise RuntimeError('Expected the desktop app Windows-backed CODEX_HOME in WSL')
+    home = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
+    if not home.is_absolute():
+        raise RuntimeError('CODEX_HOME must be an absolute path')
     return home
 
 

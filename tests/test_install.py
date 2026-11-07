@@ -166,12 +166,21 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(marketplace_path.read_text(), '{not json')
         self.assertFalse((home / 'plugins/local/background-tasks').exists())
 
-    def test_environment_path_outside_mnt_is_rejected(self):
+    def test_native_environment_home_is_supported(self):
         home = self.make_home()
         with mock.patch.dict(os.environ, {'CODEX_HOME': str(home)}):
-            with self.assertRaises(RuntimeError):
-                install.install()
-        self.assertFalse((home / 'plugins/local/background-tasks').exists())
+            result = install.install()
+        self.assertEqual(result['installed'], str(home / 'plugins/local/background-tasks'))
+
+    def test_relative_environment_home_is_rejected(self):
+        with mock.patch.dict(os.environ, {'CODEX_HOME': 'relative-home'}):
+            with self.assertRaisesRegex(RuntimeError, 'absolute'):
+                install.resolve_home()
+
+    def test_default_home(self):
+        home = self.make_home().parent
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(Path, 'home', return_value=home):
+            self.assertEqual(install.resolve_home(), home / '.codex')
 
 
 if __name__ == '__main__':

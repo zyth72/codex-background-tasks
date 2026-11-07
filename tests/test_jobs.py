@@ -38,6 +38,7 @@ class JobTests(unittest.TestCase):
         env['CLI_COMPLETION_STATE_DIR'] = str(self.state)
         env.pop('CODEX_APP_TOOLS_PIPE_PATH', None)
         env.pop('CODEX_APP_TOOLS_CALLER_HOST_ID', None)
+        env.pop('PASEO_AGENT_ID', None)
         patcher = mock.patch.dict(os.environ, env, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)

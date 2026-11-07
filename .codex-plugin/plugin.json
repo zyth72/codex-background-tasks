@@ -1,6 +1,6 @@
 {
   "name": "background-tasks",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "后台运行 CLI，支持定期进度和脚本里程碑，并将最终结果送回发起聊天。",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"

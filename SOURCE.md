@@ -14,9 +14,12 @@
 
 仓库根目录的 `.mcp.json` 只是安装器使用的相对路径模板（`["scripts/server.py"]`），不是宿主可直接加载的入口，也不依赖任何宿主插值变量。`scripts/install.py` 会把源码复制到 `$CODEX_HOME/plugins/local/background-tasks`，并在安装副本中改写为绝对路径。请只通过安装器安装。
 
+Codex CLI 0.167.0 还需执行 `codex plugin add background-tasks@codex-tools` 完成原生安装登记；它由 Codex 自身管理插件缓存，安装器不直接修改缓存。
+
 ## 外部依赖（未复制，也不在本仓库许可范围内）
 
 - 应用自带的 **`codex-app-tools`**（bundled MCP server 与 Windows Node）：`scripts/notifier.py`、`scripts/app_bridge.mjs` 只调用它来发送聊天通知，仓库不包含其代码，也不对其重新授权。
+- Paseo 托管 Codex 的通知使用本机已安装的 `paseo send` CLI，未复制 Paseo 代码。通知只允许当前 Codex thread 对应的宿主 agent。
 - 其它运行依赖：仅 Python 3.11+ 标准库（`tomllib` 用于解析 TOML）与应用已安装的 Node。
 
 ## 许可

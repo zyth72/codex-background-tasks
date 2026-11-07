@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-from notifier import notification
+from notifier import notification, notification_available
 
 TERMINAL = {'completed', 'failed', 'cancelled', 'timed_out'}
 OUTPUT_LIMIT = 2 * 1024 * 1024
@@ -111,8 +111,8 @@ def start(command, cwd, thread_id, timeout_seconds=3600, notify=True, progress_i
             raise ValueError(f'progress_interval_seconds must be an integer of at least {MIN_PROGRESS_INTERVAL}')
         if not notify:
             raise ValueError('progress_interval_seconds requires notify=true')
-    if notify and not os.environ.get('CODEX_APP_TOOLS_PIPE_PATH'):
-        raise ValueError('Desktop app notification pipe unavailable; use notify=false for execution only')
+    if notify and not notification_available(thread_id):
+        raise ValueError('Notification bridge unavailable for this thread; use notify=false for execution only')
     task_id = 'cli-' + uuid.uuid4().hex
     folder = task_folder(task_id)
     folder.mkdir(parents=True, mode=0o700)

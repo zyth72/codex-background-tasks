@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: 在 Windows 桌面应用的 WSL 聊天中运行后台 CLI 命令，完成、失败、超时或取消后自动把结果送回发起聊天，供 Codex 接着处理。用于用户要求后台执行并通知完成的任务。
+description: 在 Windows 桌面应用的 WSL 聊天或 Paseo 托管的 Codex CLI 中运行后台 CLI 命令，完成、失败、超时或取消后自动把结果送回发起聊天，供 Codex 接着处理。用于用户要求后台执行并通知完成的任务。
 ---
 
 # 后台任务
@@ -19,7 +19,7 @@ description: 在 Windows 桌面应用的 WSL 聊天中运行后台 CLI 命令，
 
 聊天关闭或应用退出时，命令仍可能继续，但通知管道可能失效。发送失败会保存到任务的 `notification_status` 和 `notification_error`；不会自动重发，以免重复消息或反复申请被拒绝的操作。不要把命令成功当成通知成功。任务结果保存在 CODEX_HOME 的 `cli-completion/tasks` 下。
 
-发送通知仅限发起任务的聊天，不允许命令输出指定另一聊天或改变目标。插件是本地 WSL 插件；没有桌面消息管道时，需明确使用 `notify=false` 才能仅运行命令。
+发送通知仅限发起任务的聊天，不允许命令输出指定另一聊天或改变目标。通知支持 Windows 桌面应用 + WSL，以及 Paseo 托管的 Codex CLI。Paseo 使用当前宿主 agent 排队发送并校验 Codex thread；普通 CLI 没有通知桥时，需明确使用 `notify=false` 才能仅运行命令。Paseo 下网页面板只列出有任务记录的聊天；没有 `open_in_codex` 时直接提供返回的本地 URL，并说明远程设备需要端口转发。
 
 用户要求原生扩展或跟随会话时，优先尝试 `background_tasks`；宿主需支持 MCP Apps thread 入口和每次工具调用的聊天元数据。不能仅因工具调用成功就声称原生 UI 已显示或跟随前台窗口。原生扩展缺少宿主支持时，明确说明并使用浏览器面板，让用户按聊天名称选择。
 

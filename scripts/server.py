@@ -98,7 +98,7 @@ def dispatch(message):
         offered = params.get('protocolVersion', '2024-11-05')
         version = offered if offered in ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'] else '2024-11-05'
         return {'protocolVersion': version, 'capabilities': {'tools': {}, 'resources': {}},
-                'serverInfo': {'name': 'background-tasks', 'version': '0.1.12'}}
+                'serverInfo': {'name': 'background-tasks', 'version': '0.1.13'}}
     if method == 'ping':
         return {}
     if method == 'tools/list':

@@ -28,7 +28,7 @@ if args.action == 'progress':
         parser.error(f'Could not submit progress: {error}')
     raise SystemExit(0)
 if args.action == 'probe':
-    result = bridge({'probe': True})
+    result = bridge({'probe': True, 'action': 'send_message_to_thread', 'thread_id': args.thread_id})
 elif args.action == 'run':
     result = jobs.start(args.command, args.cwd, args.thread_id, args.timeout, not args.no_notify,
                         progress_interval_seconds=args.progress_interval)

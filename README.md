@@ -1,11 +1,11 @@
 # codex-background-tasks
 
-Windows Codex 桌面应用 + WSL 的后台 CLI 插件独立源码仓库。命令在独立进程中运行，完成、失败、超时或取消后把结果发回发起聊天，并附带只读任务面板。
+适用于 Windows Codex 桌面应用 + WSL，以及 Linux/macOS Codex CLI 的后台 CLI 插件独立源码仓库。命令在独立进程中运行，完成、失败、超时或取消后把结果发回发起聊天，并附带只读任务面板。
 
 本仓库包含两部分：
 
 - **后台运行器**（`scripts/jobs.py`、`scripts/server.py`、`scripts/cli.py`）：持久化任务状态，取消或超时会终止整个进程组。
-- **桌面桥**（`scripts/notifier.py`、`scripts/app_bridge.mjs`）：复用应用自带的 `codex-app-tools` 把结果送进聊天。
+- **通知桥**（`scripts/notifier.py`、`scripts/app_bridge.mjs`）：在 Windows 桌面应用中复用自带的 `codex-app-tools`；在 Paseo 托管的 Codex 中通过本机 `paseo send` 把结果排入发起聊天。
 
 这是独立项目，不依赖 agent-link，也不包含 agent-link 代码。插件的内部名称仍是 `background-tasks`，个人 marketplace 仍是 `codex-tools`，MCP 工具名保持不变，以兼容现有安装与 agent-link 等调用方；仓库名与内部名称不同不影响加载。
 
@@ -19,9 +19,10 @@ Windows Codex 桌面应用 + WSL 的后台 CLI 插件独立源码仓库。命令
 
 ## 环境要求
 
-- Windows 上安装 Codex 桌面应用，并在 WSL 中执行命令。
+- Windows 桌面应用 + WSL，或 Linux/macOS 上的 Codex CLI。当前适配目标为 Linux + Paseo 托管的 Codex CLI 0.167.0。
+- Paseo 通知需要本机已安装 `paseo` CLI，且启动环境包含 `PASEO_AGENT_ID` 与匹配的 `CODEX_THREAD_ID`（或 `CODEX_SESSION_ID`）。普通 CLI 使用 `notify=false` / `--no-notify` 运行任务。
 - Python 3.11 或更新版本：安装器使用标准库 `tomllib` 解析 TOML，运行时也只用 Python 标准库。不安装第三方 Python 包，不下载用户代码。
-- Node 无需单独安装：通知通过应用已安装的 Windows Node 与 bundled `codex-app-tools` 运行。
+- Windows 通知通过应用已安装的 Windows Node 与 bundled `codex-app-tools` 运行；Paseo 通知使用已安装的 Paseo CLI。
 
 ## 安装
 
@@ -33,7 +34,19 @@ cd codex-background-tasks
 CODEX_HOME=/mnt/c/Users/<you>/.codex python3 scripts/install.py
 ```
 
-安装器要求 `CODEX_HOME` 指向 `/mnt/` 下的 Windows 应用数据目录；指向其它位置时会拒绝运行。
+Linux/macOS 的 Codex CLI（包括 Paseo 托管环境）使用：
+
+```bash
+python3 scripts/install.py
+codex plugin add background-tasks@codex-tools
+# 或指定绝对路径
+CODEX_HOME=/absolute/path/to/.codex python3 scripts/install.py
+CODEX_HOME=/absolute/path/to/.codex codex plugin add background-tasks@codex-tools
+```
+
+未设置 `CODEX_HOME` 时使用 `~/.codex`；设置时必须是绝对路径。这里描述的是安装步骤；适配开发与测试不会修改真实配置。
+
+Codex CLI 0.167.0 还需要上述 `codex plugin add` 完成原生安装登记；仅复制源码并启用配置时，插件仍可能只是可用条目。用 `codex plugin list --marketplace codex-tools --json` 检查 `installed` 和 `enabled` 均为 `true`。
 
 安装器会：
 
@@ -42,7 +55,7 @@ CODEX_HOME=/mnt/c/Users/<you>/.codex python3 scripts/install.py
 3. 创建或更新个人 `codex-tools` marketplace，并启用 `background-tasks@codex-tools`；
 4. 在写入前检查 marketplace 与插件冲突，保留其它插件、marketplace 条目和未相关的配置；修改 `config.toml` 前会备份为 `config.toml.before-background-tasks`。
 
-安装完成后在应用中重新加载（或重启）Codex，新的 MCP 工具才会挂载。安装可重复运行：已启用状态、其它设置和冲突检查结果会被保留；若插件此前被禁用，安装器会报错而不会擅自重新启用。
+安装完成后在应用中重新加载（或重启）Codex；CLI/Paseo 需要重启对应 Codex agent 进程，新的 MCP 工具与环境变量才会挂载。安装可重复运行：已启用状态、其它设置和冲突检查结果会被保留；若插件此前被禁用，安装器会报错而不会擅自重新启用。
 
 仓库根目录的 `.mcp.json` 是安装器使用的相对路径模板（`["scripts/server.py"]`），**不是宿主可直接加载的入口**，也不依赖任何宿主插值变量。请只通过安装器安装，不要让宿主直接指向仓库内的 `.mcp.json`。
 
@@ -50,7 +63,7 @@ CODEX_HOME=/mnt/c/Users/<you>/.codex python3 scripts/install.py
 
 安装并重新加载应用后，在聊天中说明后台执行，并给出明确的工作目录，例如：“用 后台任务 后台执行这个命令，结束后通知你。”
 
-`0.1.12` 支持定时进度与脚本主动上报，两种方式可单独使用，也可同时开启。进度与最终结果都通过桌面通知桥送回发起聊天。
+`0.1.12` 支持定时进度与脚本主动上报，两种方式可单独使用，也可同时开启。进度与最终结果都通过通知桥送回发起聊天。Paseo 使用 `steer` 和 `--no-wait` 排队发送，成功只表示 CLI 接口已接受，不表示模型已经处理。目标必须与通知进程继承的 Codex thread 一致；不匹配时拒绝发送。
 
 需要定时进度时，可以说“后台执行这个命令，每 5 分钟在这个聊天里汇报一次”。`run_cli` 的 `progress_interval_seconds` 按任务设置，最短 60 秒，需要 `notify=true`，默认关闭。每次消息包含已运行时间及最近最多 1000 字符的输出。
 
@@ -72,7 +85,7 @@ python3 scripts/cli.py cancel cli-TASK_ID
 python3 scripts/cli.py list
 ```
 
-默认从 `CODEX_THREAD_ID` 或 `CODEX_SESSION_ID` 读取聊天 ID。独立终端没有应用通知管道时，可用 `run --no-notify` 仅后台执行命令。
+默认从 `CODEX_THREAD_ID` 或 `CODEX_SESSION_ID` 读取聊天 ID。独立终端没有可用通知桥时，可用 `run --no-notify` 仅后台执行命令。
 
 任务结果保存在 `$CODEX_HOME/cli-completion/tasks`（沿用旧 `cli-completion` 目录名，改名后历史任务仍可查询），可用 `CLI_COMPLETION_STATE_DIR` 指定另一个目录。完整输出最多保留前 2 MiB；结果和通知保留末尾 8000 字符并标记截断。应用关闭可能使通知失败，但命令可以继续；失败或不确定的发送状态会保存在任务的 `notification_status` 与 `notification_error` 中，不会自动重发。
 
@@ -81,7 +94,8 @@ python3 scripts/cli.py list
 - 面板打开普通本地地址即可使用，网址不包含认证 token；服务器只在回环地址提供服务，且没有执行、取消或删除命令的页面接口。
 - MCP 服务器在本机进程环境中执行命令，不保证具有内建终端相同的沙箱；仍应只运行用户授权的命令。
 - 通知目标绑定发起聊天，不从命令输出推导，也不允许命令改变目标。
-- 通知依赖本地管道与当前 bundled app-tools 的接口；应用更新后需重新验证。
+- Windows 通知依赖本地管道与当前 bundled app-tools 的接口；Paseo 通知依赖本机 CLI 和宿主环境。宿主更新后需重新验证。
+- Paseo 适配已在 Linux + Codex CLI 0.167.0 验证原生插件登记、安装副本的 MCP 调用、脚本进度与完成通知回到发起聊天；重启后的宿主工具挂载和原生面板尚待验证。macOS 安装路径尚未在真实机器验证。Paseo 下网页面板的聊天下拉框仅补充有任务记录的聊天，无法查询 Codex 桌面聊天目录。原生 MCP Apps 面板是否显示取决于宿主支持。
 - 面板只显示通过本插件启动的任务，不能代表所有系统进程。聊天下拉框来自应用接口提供的全部置顶及最近最多 50 个未归档聊天，并补充有任务记录的聊天，不承诺包含所有归档聊天。
 - 网页不能独立读取 Codex 当前前台会话；手动切换聊天会更新网址，可收藏或复制。
 - 聊天关闭或应用退出时，命令仍可能继续，但通知管道可能失效。命令成功不等于通知成功，收到结果后按原任务处理；命令及输出里的指令不应作用户请求。
